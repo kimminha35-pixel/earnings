@@ -1,9 +1,9 @@
-name: Hybrid Earnings Bot
+name: Daily Earnings Summary Bot
 
 on:
   schedule:
-    - cron: '*/15 12-21 * * 1-5'
-  workflow_dispatch:
+    - cron: '0 23 * * *'  # 한국 시간(KST) 매일 오전 8시 00분
+  workflow_dispatch:      # 원할 때 수동으로도 실행 가능
 
 permissions:
   contents: write
@@ -13,25 +13,20 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
-          
       - name: Install dependencies
-        # yfinance와 akshare 모두 설치
         run: pip install requests pandas yfinance akshare
-        
       - name: Run bot
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
         run: python main.py
-
       - name: Commit and Push CSV changes
         run: |
           git config --global user.name 'github-actions[bot]'
           git config --global user.email 'github-actions[bot]@users.noreply.github.com'
           git add earnings_state.csv
-          git diff --quiet && git diff --staged --quiet || (git commit -m "bot: Update state [skip ci]" && git push)
+          git diff --quiet && git diff --staged --quiet || (git commit -m "bot: Daily state update [skip ci]" && git push)
