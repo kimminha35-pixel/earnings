@@ -130,31 +130,44 @@ def check_cn_earnings(state):
     updated = False
     for ticker in CN_TICKERS:
         try:
-            df = ak.stock_lrb_em(symbol=ticker)
+            # 단일 종목 재무지표 함수로 변경
+            df = ak.stock_financial_analysis_indicator(symbol=ticker)
             if df.empty:
                 continue
                 
-            df['REPORT_DATE'] = pd.to_datetime(df['REPORT_DATE'])
-            df = df.sort_values(by='REPORT_DATE', ascending=False).reset_index(drop=True)
+            # 날짜 컬럼 찾기 (기본 '日期')
+            date_col = '日期' if '日期' in df.columns else df.columns[0]
             
-            latest_date_obj = df.iloc[0]['REPORT_DATE']
+            df[date_col] = pd.to_datetime(df[date_col])
+            df = df.sort_values(by=date_col, ascending=False).reset_index(drop=True)
+            
+            latest_date_obj = df.iloc[0][date_col]
             latest_date_str = latest_date_obj.strftime('%Y-%m-%d')
             
             if state.get(ticker) == latest_date_str:
                 continue
                 
-            current_rev = df.iloc[0]['TOTAL_OPERATE_INCOME']
-            current_ni = df.iloc[0]['PARENT_NETPROFIT']
+            # 매출, 순이익 컬럼 유연하게 찾기
+            rev_col = next((c for c in df.columns if '主营业务收入' in c or '营业收入' in c or '收入' in c), None) 
+            ni_col = next((c for c in df.columns if '净利润' in c or '利润' in c), None)
             
+            if not rev_col or not ni_col:
+                print(f"CN Error on {ticker}: 필수 컬럼 누락 -> {list(df.columns)}")
+                continue
+
+            current_rev = float(df.iloc[0][rev_col])
+            current_ni = float(df.iloc[0][ni_col])
+            
+            # 1년 전 데이터 매칭 (YoY 계산용)
             past_date_str = f"{latest_date_obj.year - 1}-{latest_date_obj.month:02d}-{latest_date_obj.day:02d}"
-            past_df = df[df['REPORT_DATE'] == past_date_str]
+            past_df = df[df[date_col] == pd.to_datetime(past_date_str)]
             
             yoy_rev = 0
             yoy_ni = 0
             
             if not past_df.empty:
-                past_rev = past_df.iloc[0]['TOTAL_OPERATE_INCOME']
-                past_ni = past_df.iloc[0]['PARENT_NETPROFIT']
+                past_rev = float(past_df.iloc[0][rev_col])
+                past_ni = float(past_df.iloc[0][ni_col])
                 yoy_rev = ((current_rev - past_rev) / past_rev) * 100 if past_rev else 0
                 yoy_ni = ((current_ni - past_ni) / abs(past_ni)) * 100 if past_ni else 0
                 
@@ -169,6 +182,7 @@ def check_cn_earnings(state):
             send_telegram(msg)
             state[ticker] = latest_date_str
             updated = True
+            
         except Exception as e:
             print(f"CN Error on {ticker}: {e}")
             
@@ -178,7 +192,7 @@ def check_cn_earnings(state):
 if __name__ == "__main__":
     current_state = load_state()
     
-    # 1. 스케줄 브리핑 체크 (월 1회)
+    # 1. 스케줄 브리핑 체크
     schedule_updated = send_monthly_schedule(current_state)
     
     # 2. 신규 실적 체크
