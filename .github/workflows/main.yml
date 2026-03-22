@@ -1,9 +1,10 @@
-name: Daily Earnings Summary Bot
+name: Daily Morning Earnings Bot
 
 on:
   schedule:
-    - cron: '0 23 * * *'  # 한국 시간(KST) 매일 오전 8시 00분
-  workflow_dispatch:      # 원할 때 수동으로도 실행 가능
+    # 한국 시간 기준 매일 오전 8시 00분 (UTC 23:00)
+    - cron: '0 23 * * *'
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -24,9 +25,9 @@ jobs:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
         run: python main.py
-      - name: Commit and Push CSV changes
+      - name: Commit changes
         run: |
           git config --global user.name 'github-actions[bot]'
           git config --global user.email 'github-actions[bot]@users.noreply.github.com'
           git add earnings_state.csv
-          git diff --quiet && git diff --staged --quiet || (git commit -m "bot: Daily state update [skip ci]" && git push)
+          git diff --quiet && git diff --staged --quiet || (git commit -m "bot: Daily summary update" && git push)
