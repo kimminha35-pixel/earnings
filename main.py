@@ -47,7 +47,6 @@ CN_TICKERS = ["002270", "601138", "002371", "300274", "002518"]
 # 시간 설정 (한국 시간 KST)
 KST = datetime.utcnow() + timedelta(hours=9)
 CURRENT_MONTH_STR = KST.strftime('%Y-%m') 
-DETECT_TIME_STR = KST.strftime('%Y-%m-%d %H:%M')
 
 # --- 4. CSV 상태 관리 ---
 def load_state():
@@ -118,7 +117,7 @@ def get_currency_symbol(ticker):
     elif ".KS" in ticker: return "₩"
     else: return "$"
 
-# --- 7. 글로벌 실적 & YoY 확인 (yfinance) ---
+# --- 7. 글로벌 실적 & YoY & 컨센서스 확인 (yfinance) ---
 def check_yf_earnings(state):
     updated = False
     for ticker in YF_TICKERS:
@@ -136,6 +135,7 @@ def check_yf_earnings(state):
                 continue
                 
             if len(q_financials.columns) >= 5:
+                # 1. 매출 및 순이익 계산
                 try:
                     current_rev = q_financials.loc['Total Revenue'][0]
                     past_rev = q_financials.loc['Total Revenue'][4]
@@ -149,13 +149,50 @@ def check_yf_earnings(state):
                 past_ni = q_financials.loc['Net Income'][4]
                 yoy_ni = ((current_ni - past_ni) / abs(past_ni)) * 100 if past_ni else 0
                 
+                # 2. 실제 발표일 및 EPS 컨센서스 역추적
+                actual_release_str = "확인 불가"
+                eps_estimate = None
+                eps_actual = None
+                surprise_msg = "⚪ 데이터 없음"
+                
+                try:
+                    ed = stock.earnings_dates
+                    if ed is not None and not ed.empty:
+                        now_utc = pd.Timestamp.utcnow()
+                        past_dates = ed[ed.index < now_utc]
+                        if not past_dates.empty:
+                            latest_earnings = past_dates.iloc[0]
+                            
+                            # KST 시간 변환
+                            actual_release_dt = past_dates.index[0].tz_convert('Asia/Seoul')
+                            actual_release_str = actual_release_dt.strftime('%Y-%m-%d %H:%M')
+                            
+                            # 컨센서스 데이터 추출
+                            eps_estimate = latest_earnings.get('Estimate')
+                            eps_actual = latest_earnings.get('Reported')
+                            
+                            if pd.notna(eps_estimate) and pd.notna(eps_actual):
+                                if eps_actual > eps_estimate:
+                                    surprise_msg = "🟢 **컨센 상회 (Beat)**"
+                                elif eps_actual < eps_estimate:
+                                    surprise_msg = "🔴 **컨센 하회 (Miss)**"
+                                else:
+                                    surprise_msg = "⚪ **컨센 부합 (Meet)**"
+                except Exception:
+                    pass
+
                 curr = get_currency_symbol(ticker)
                 name = TICKER_NAMES.get(ticker, ticker)
                 
+                # EPS 정보 포맷팅
+                eps_info = f"• 발표: {curr} {eps_actual:.2f} / 예상: {curr} {eps_estimate:.2f}\n• 결과: {surprise_msg}" if pd.notna(eps_actual) and pd.notna(eps_estimate) else "• EPS 예측 데이터가 제공되지 않습니다."
+                
                 msg = (
                     f"🌍 **[{name}] 신규 실적 업데이트** ({ticker})\n"
-                    f"⏰ 데이터 감지 시간: {DETECT_TIME_STR} (KST)\n"
-                    f"🗓 기준 분기: {latest_date_str}\n\n"
+                    f"📢 **발표 일시:** {actual_release_str} (KST)\n"
+                    f"🗓 **기준 분기:** {latest_date_str}\n\n"
+                    f"🎯 **EPS (주당순이익) 어닝 서프라이즈**\n"
+                    f"{eps_info}\n\n"
                     f"📊 **매출 (Revenue)**\n"
                     f"• {curr} {current_rev:,.0f} (YoY: {yoy_rev:+.1f}%)\n\n"
                     f"💰 **순이익 (Net Income)**\n"
@@ -214,8 +251,8 @@ def check_cn_earnings(state):
             
             msg = (
                 f"🇨🇳 **[{name}] 신규 실적 업데이트** ({ticker})\n"
-                f"⏰ 데이터 감지 시간: {DETECT_TIME_STR} (KST)\n"
-                f"🗓 기준 분기: {latest_date_str}\n\n"
+                f"📢 **발표 일시:** 확인 불가 (무료 API 미제공)\n"
+                f"🗓 **기준 분기:** {latest_date_str}\n\n"
                 f"📊 **매출 (Total Revenue)**\n"
                 f"• ¥ {current_rev:,.0f} (YoY: {yoy_rev:+.1f}%)\n\n"
                 f"💰 **순이익 (Net Income)**\n"
