@@ -6,7 +6,7 @@ import yfinance as yf
 import akshare as ak
 from datetime import datetime, timedelta
 
-# --- 1. 설정 및 종목 리스트 (생략 없이 유지) ---
+# --- 1. 설정 및 종목 리스트 ---
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 CHAT_ID = os.environ.get("CHAT_ID")
 STATE_FILE = "earnings_state.csv"
@@ -65,7 +65,7 @@ def format_num(num):
 
 if __name__ == "__main__":
     current_state = load_state()
-    completed_list, upcoming_list, new_reports = [], [], []
+    completed_raw, upcoming_raw, new_reports = [], [], []
 
     # 1. 글로벌 (yfinance)
     for ticker in YF_TICKERS:
@@ -76,9 +76,12 @@ if __name__ == "__main__":
                 for date_idx, row in ed.iterrows():
                     dt = date_idx.tz_localize(None)
                     if dt.year == KST_NOW.year and dt.month == KST_NOW.month:
-                        item = f"{TICKER_NAMES[ticker]} ({ticker}) - {dt.strftime('%m/%d')}"
-                        if dt < KST_NOW.replace(tzinfo=None): completed_list.append(item)
-                        else: upcoming_list.append(item)
+                        item_str = f"{TICKER_NAMES[ticker]} ({ticker}) - {dt.strftime('%m/%d')}"
+                        # 정렬을 위해 (날짜객체, 문자열) 튜플로 저장
+                        if dt < KST_NOW.replace(tzinfo=None):
+                            completed_raw.append((dt, item_str))
+                        else:
+                            upcoming_raw.append((dt, item_str))
             
             q_fin = stock.quarterly_financials
             if not q_fin.empty:
@@ -109,24 +112,34 @@ if __name__ == "__main__":
                     current_state[ticker] = l_date
         except: pass
 
-    # 2. 중국 (akshare) - 요약 리스트만
+    # 2. 중국 (akshare)
     for ticker in CN_TICKERS:
         try:
             df = ak.stock_financial_analysis_indicator(symbol=ticker)
             if df.empty: continue
-            l_date = pd.to_datetime(df.iloc[0]['日期']).strftime('%Y-%m-%d')
+            d_col = '日期' if '日期' in df.columns else df.columns[0]
+            l_date = pd.to_datetime(df.iloc[0][d_col]).strftime('%Y-%m-%d')
             if current_state.get(ticker) != l_date:
                 new_reports.append(f"📍 *{TICKER_NAMES[ticker]}* (CN) 실적 업데이트")
                 current_state[ticker] = l_date
         except: pass
 
-    # --- 3. 통합 메시지 구성 (조건 없이 발송) ---
+    # --- 3. 정렬 및 메시지 통합 ---
+    # 날짜(x[0]) 기준으로 정렬 후 중복 제거
+    def get_sorted_list(raw_list):
+        unique_items = list({x[1]: x[0] for x in raw_list}.items())
+        unique_items.sort(key=lambda x: x[1]) # 날짜순 정렬
+        return [f"• {x[0]}" for x in unique_items]
+
+    completed_list = get_sorted_list(completed_raw)
+    upcoming_list = get_sorted_list(upcoming_raw)
+
     msg = f"🗓 *{KST_NOW.year}년 {KST_NOW.month}월 실적 브리핑 ({KST_NOW.strftime('%m/%d')})*\n\n"
     
     if completed_list:
-        msg += "✅ *이번 달 완료*\n" + "\n".join([f"• {x} 완료" for x in sorted(list(set(completed_list)))]) + "\n\n"
+        msg += "✅ *이번 달 완료 (시계열순)*\n" + "\n".join(completed_list) + "\n\n"
     if upcoming_list:
-        msg += "🔜 *이번 달 예정*\n" + "\n".join([f"• {x} 예정" for x in sorted(list(set(upcoming_list)))]) + "\n\n"
+        msg += "🔜 *이번 달 예정 (시계열순)*\n" + "\n".join(upcoming_list) + "\n\n"
 
     msg += "───────────────\n"
     if new_reports:
